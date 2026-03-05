@@ -67,7 +67,7 @@ export function calculateSubscriptionPrice(
   if (!plan) throw new Error('Invalid plan');
 
   // Starter a un prix fixe sans réduction
-  if (plan.fixedPrice) {
+  if (planId === 'starter') {
     return {
       basePrice: plan.price,
       discount: 0,
