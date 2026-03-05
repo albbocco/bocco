@@ -1,0 +1,99 @@
+{
+  "name": "Get Credits Balance",
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        250,
+        300
+      ],
+      "webhookId": "get-credits"
+    },
+    {
+      "parameters": {
+        "functionCode": "const authHeader = $input.first().json.headers.authorization;\nif (!authHeader) {\n  return { json: { error: 'No token provided' } };\n}\nconst token = authHeader.replace('Bearer ', '');\nconst jwt = require('jsonwebtoken');\ntry {\n  const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret');\n  return { json: { userId: decoded.userId } };\n} catch (e) {\n  return { json: { error: 'Invalid token' } };\n}"
+      },
+      "name": "Verify JWT",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        450,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT balance FROM credits WHERE user_id = ?",
+        "parameters": "={{ JSON.stringify([$json.userId]) }}"
+      },
+      "name": "Get Credits",
+      "type": "n8n-nodes-base.sqlite",
+      "typeVersion": 1,
+      "position": [
+        650,
+        300
+      ],
+      "credentials": {
+        "sqlite": "sqlite-db"
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ credits: $json.results[0]?.balance || 0 }) }}"
+      },
+      "name": "Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        850,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Verify JWT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify JWT": {
+      "main": [
+        [
+          {
+            "node": "Get Credits",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Credits": {
+      "main": [
+        [
+          {
+            "node": "Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "active": false
+}

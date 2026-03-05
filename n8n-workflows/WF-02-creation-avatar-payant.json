@@ -1,0 +1,416 @@
+{
+  "name": "WF-02: Création Avatar Payant",
+  "nodes": [
+    {
+      "id": "webhook-start",
+      "name": "Webhook - Create Avatar",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "create-paid-avatar",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "create-paid-avatar",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "verify-credits",
+      "name": "Check Credits",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [450, 300],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-db",
+          "name": "Supabase PostgreSQL"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT credits_remaining FROM users WHERE id = '{{ $json.body.user_id }}';"
+      }
+    },
+    {
+      "id": "credits-sufficient",
+      "name": "Credits >= 1?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [650, 300],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-1",
+              "leftValue": "={{ $json[0].credits_remaining }}",
+              "rightValue": "1",
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "error-insufficient",
+      "name": "Error - Insufficient Credits",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [650, 500],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\"success\": false, \"error\": \"INSUFFICIENT_CREDITS\", \"message\": \"Crédits insuffisants. Achetez des crédits pour continuer.\"}",
+        "options": {
+          "responseCode": 402
+        }
+      }
+    },
+    {
+      "id": "generate-prompt",
+      "name": "Generate Optimized Prompt",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [850, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "gpt-4o-mini"
+            },
+            {
+              "name": "messages",
+              "value": "=[{\"role\": \"system\", \"content\": \"Tu es un expert en génération d'images. Optimise la description utilisateur pour créer un prompt professionnel pour un avatar.\"}, {\"role\": \"user\", \"content\": \"Description: {{ $json.body.description }}. Style: {{ $json.body.style || 'professionnel' }}\"}]"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      }
+    },
+    {
+      "id": "hypereal-image",
+      "name": "Hypereal AI - Generate Image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1050, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hypereal.tech/v1/image/generate",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "prompt",
+              "value": "={{ $json.choices[0].message.content }}"
+            },
+            {
+              "name": "model",
+              "value": "flux-2"
+            },
+            {
+              "name": "width",
+              "value": "1024"
+            },
+            {
+              "name": "height",
+              "value": "1024"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      }
+    },
+    {
+      "id": "generate-script",
+      "name": "Generate Script",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1250, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.openai.com/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "gpt-4o-mini"
+            },
+            {
+              "name": "messages",
+              "value": "=[{\"role\": \"system\", \"content\": \"Génère une phrase de présentation courte (5-10 mots) pour un avatar.\"}, {\"role\": \"user\", \"content\": \"Description avatar: {{ $json.body.description }}\"}]"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      }
+    },
+    {
+      "id": "hypereal-animate",
+      "name": "Hypereal AI - Animate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1450, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hypereal.tech/v1/video/animate",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "image_url",
+              "value": "={{ $json.image_url }}"
+            },
+            {
+              "name": "model",
+              "value": "wan-2.5"
+            },
+            {
+              "name": "duration",
+              "value": "5"
+            },
+            {
+              "name": "prompt",
+              "value": "={{ $json.choices[0].message.content }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        }
+      }
+    },
+    {
+      "id": "deduct-credits",
+      "name": "Deduct 1 Credit",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [1650, 300],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "WF-05: Gestion Crédits"
+        },
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "user_id",
+              "value": "={{ $json.body.user_id }}"
+            },
+            {
+              "name": "amount",
+              "value": "-1"
+            },
+            {
+              "name": "description",
+              "value": "Création avatar payant"
+            },
+            {
+              "name": "type",
+              "value": "usage"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "save-avatar",
+      "name": "Save Avatar to DB",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1850, 300],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-db",
+          "name": "Supabase PostgreSQL"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO avatars (user_id, image_url, video_url, prompt_used, is_free, created_at, status) VALUES ('{{ $json.body.user_id }}', '{{ $json.image_url }}', '{{ $json.video_url }}', '{{ $json.body.description }}', false, NOW(), 'active');"
+      }
+    },
+    {
+      "id": "send-confirmation",
+      "name": "Send Confirmation Email",
+      "type": "n8n-nodes-base.sendEmail",
+      "typeVersion": 2.1,
+      "position": [2050, 300],
+      "credentials": {
+        "smtp": {
+          "id": "brevo-smtp",
+          "name": "Brevo SMTP"
+        }
+      },
+      "parameters": {
+        "toAddresses": "={{ $json.body.email }}",
+        "subject": "Votre avatar est prêt !",
+        "text": "Votre avatar payant a été créé avec succès. Lien : {{ $json.video_url }}",
+        "html": "<h1>Votre avatar est prêt !</h1><p><a href='{{ $json.video_url }}'>Voir mon avatar</a></p>"
+      }
+    },
+    {
+      "id": "response-success",
+      "name": "Response - Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2250, 300],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\"success\": true, \"message\": \"Avatar créé avec succès. 1 crédit déduit.\"}"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook - Create Avatar": {
+      "main": [
+        [
+          {
+            "node": "Check Credits",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Credits": {
+      "main": [
+        [
+          {
+            "node": "Credits >= 1?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Credits >= 1?": {
+      "main": [
+        [
+          {
+            "node": "Generate Optimized Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error - Insufficient Credits",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Optimized Prompt": {
+      "main": [
+        [
+          {
+            "node": "Hypereal AI - Generate Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hypereal AI - Generate Image": {
+      "main": [
+        [
+          {
+            "node": "Generate Script",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Script": {
+      "main": [
+        [
+          {
+            "node": "Hypereal AI - Animate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hypereal AI - Animate": {
+      "main": [
+        [
+          {
+            "node": "Deduct 1 Credit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Deduct 1 Credit": {
+      "main": [
+        [
+          {
+            "node": "Save Avatar to DB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Avatar to DB": {
+      "main": [
+        [
+          {
+            "node": "Send Confirmation Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Confirmation Email": {
+      "main": [
+        [
+          {
+            "node": "Response - Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "WF-13: Retry Auto + Fallback"
+  },
+  "tags": ["avatar", "paid", "credits"]
+}

@@ -15,9 +15,10 @@ export const PLANS = {
   starter: {
     id: 'starter',
     name: 'Starter',
-    price: 19,
+    price: 9,
     credits: 5,
     extraCreditPrice: 3,
+    fixedPrice: true, // Pas de réduction possible
   },
   pro: {
     id: 'pro',
@@ -64,6 +65,15 @@ export function calculateSubscriptionPrice(
 ): { basePrice: number; discount: number; finalPrice: number } {
   const plan = PLANS[planId];
   if (!plan) throw new Error('Invalid plan');
+
+  // Starter a un prix fixe sans réduction
+  if (plan.fixedPrice) {
+    return {
+      basePrice: plan.price,
+      discount: 0,
+      finalPrice: plan.price,
+    };
+  }
 
   let discount = 0;
   for (const formationId of userFormations) {

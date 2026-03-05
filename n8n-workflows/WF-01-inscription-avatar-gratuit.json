@@ -1,0 +1,358 @@
+{
+  "name": "WF-01: Inscription + Avatar Gratuit",
+  "nodes": [
+    {
+      "id": "webhook-start",
+      "name": "Webhook - Inscription",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "register-free-avatar",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "register-free-avatar",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "create-user",
+      "name": "Create User in DB",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [450, 300],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-db",
+          "name": "Supabase PostgreSQL"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO users (email, first_name, last_name, created_at, has_used_free_avatar, subscription_status, credits_remaining) VALUES ('{{ $json.body.email }}', '{{ $json.body.first_name }}', '{{ $json.body.last_name }}', NOW(), false, 'free', 0) RETURNING id;"
+      }
+    },
+    {
+      "id": "upload-photo-r2",
+      "name": "Upload Photo to R2",
+      "type": "n8n-nodes-base.awsS3",
+      "typeVersion": 2,
+      "position": [650, 200],
+      "credentials": {
+        "aws": {
+          "id": "cloudflare-r2",
+          "name": "Cloudflare R2"
+        }
+      },
+      "parameters": {
+        "operation": "upload",
+        "bucketName": "boccoai-avatars",
+        "key": "=users/{{ $json[0].id }}/photos/original_{{ Date.now() }}.jpg",
+        "binaryData": true,
+        "binaryPropertyName": "data"
+      }
+    },
+    {
+      "id": "hypereal-image",
+      "name": "Hypereal AI - Generate Image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [850, 200],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hypereal.tech/v1/image/generate",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "prompt",
+              "value": "=Professional avatar portrait of {{ $json.body.first_name }}, realistic style, high quality, studio lighting, neutral background"
+            },
+            {
+              "name": "model",
+              "value": "flux-2"
+            },
+            {
+              "name": "width",
+              "value": "512"
+            },
+            {
+              "name": "height",
+              "value": "512"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 60000
+        }
+      }
+    },
+    {
+      "id": "hypereal-animation",
+      "name": "Hypereal AI - Animate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1050, 200],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.hypereal.tech/v1/video/animate",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "image_url",
+              "value": "={{ $json.image_url }}"
+            },
+            {
+              "name": "model",
+              "value": "wan-2.5"
+            },
+            {
+              "name": "duration",
+              "value": "5"
+            },
+            {
+              "name": "prompt",
+              "value": "Person speaking naturally, subtle head movements, professional demeanor"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        }
+      }
+    },
+    {
+      "id": "poll-animation",
+      "name": "Poll Animation Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1250, 200],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.hypereal.tech/v1/video/status/{{ $json.job_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "retryOnFail": true,
+      "waitBetweenTries": 10000,
+      "maxTries": 30
+    },
+    {
+      "id": "download-video",
+      "name": "Download Video",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1450, 200],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.video_url }}",
+        "responseFormat": "file",
+        "options": {
+          "timeout": 60000
+        }
+      }
+    },
+    {
+      "id": "upload-video-r2",
+      "name": "Upload Video to R2",
+      "type": "n8n-nodes-base.awsS3",
+      "typeVersion": 2,
+      "position": [1650, 200],
+      "credentials": {
+        "aws": {
+          "id": "cloudflare-r2",
+          "name": "Cloudflare R2"
+        }
+      },
+      "parameters": {
+        "operation": "upload",
+        "bucketName": "boccoai-avatars",
+        "key": "=users/{{ $json[0].id }}/avatars/free_{{ Date.now() }}.mp4",
+        "binaryData": true,
+        "binaryPropertyName": "data"
+      }
+    },
+    {
+      "id": "save-avatar",
+      "name": "Save Avatar to DB",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1850, 200],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-db",
+          "name": "Supabase PostgreSQL"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO avatars (user_id, image_url, video_url, is_free, created_at, status) VALUES ('{{ $json[0].id }}', '{{ $json.image_url }}', '{{ $json.Location }}', true, NOW(), 'active'); UPDATE users SET has_used_free_avatar = true WHERE id = '{{ $json[0].id }}';"
+      }
+    },
+    {
+      "id": "send-welcome-email",
+      "name": "Send Welcome Email",
+      "type": "n8n-nodes-base.sendEmail",
+      "typeVersion": 2.1,
+      "position": [450, 450],
+      "credentials": {
+        "smtp": {
+          "id": "brevo-smtp",
+          "name": "Brevo SMTP"
+        }
+      },
+      "parameters": {
+        "toAddresses": "={{ $json.body.email }}",
+        "subject": "Bienvenue sur bocco.ai - Votre avatar gratuit est prêt !",
+        "text": "Bonjour {{ $json.body.first_name }},\n\nBienvenue sur bocco.ai !\n\nVotre avatar gratuit a été créé avec succès. Vous pouvez le télécharger ici : {{ $json.video_url }}\n\nCordialement,\nL'équipe bocco.ai",
+        "html": "<h1>Bienvenue sur bocco.ai !</h1><p>Bonjour {{ $json.body.first_name }},</p><p>Votre avatar gratuit est prêt !</p><p><a href='{{ $json.video_url }}' style='padding: 10px 20px; background: #007bff; color: white; text-decoration: none; border-radius: 5px;'>Voir mon avatar</a></p><p>Cordialement,<br>L'équipe bocco.ai</p>"
+      }
+    },
+    {
+      "id": "response-success",
+      "name": "Response - Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2050, 200],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\"success\": true, \"message\": \"Inscription réussie. Votre avatar gratuit est en cours de génération.\", \"avatar_url\": \"{{ $json.video_url }}\"}"
+      }
+    },
+    {
+      "id": "response-error",
+      "name": "Response - Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2050, 400],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\"success\": false, \"message\": \"Une erreur est survenue.\"}",
+        "options": {
+          "responseCode": 500
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook - Inscription": {
+      "main": [
+        [
+          {
+            "node": "Create User in DB",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send Welcome Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create User in DB": {
+      "main": [
+        [
+          {
+            "node": "Upload Photo to R2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload Photo to R2": {
+      "main": [
+        [
+          {
+            "node": "Hypereal AI - Generate Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hypereal AI - Generate Image": {
+      "main": [
+        [
+          {
+            "node": "Hypereal AI - Animate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hypereal AI - Animate": {
+      "main": [
+        [
+          {
+            "node": "Poll Animation Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Poll Animation Status": {
+      "main": [
+        [
+          {
+            "node": "Download Video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Video": {
+      "main": [
+        [
+          {
+            "node": "Upload Video to R2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload Video to R2": {
+      "main": [
+        [
+          {
+            "node": "Save Avatar to DB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Avatar to DB": {
+      "main": [
+        [
+          {
+            "node": "Response - Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner",
+    "errorWorkflow": "WF-13: Retry Auto + Fallback"
+  },
+  "tags": ["avatar", "free", "onboarding"]
+}

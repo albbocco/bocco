@@ -1,0 +1,99 @@
+{
+  "name": "User Login",
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        250,
+        300
+      ],
+      "webhookId": "user-login"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM users WHERE email = ?",
+        "parameters": "={{ JSON.stringify([$input.first().json.body.email]) }}"
+      },
+      "name": "Get User",
+      "type": "n8n-nodes-base.sqlite",
+      "typeVersion": 1,
+      "position": [
+        450,
+        300
+      ],
+      "credentials": {
+        "sqlite": "sqlite-db"
+      }
+    },
+    {
+      "parameters": {
+        "functionCode": "const bcrypt = require('bcryptjs');\nconst jwt = require('jsonwebtoken');\nconst user = $input.first().json.results[0];\nconst password = $input.first().json.body.password;\n\nif (!user) {\n  return { json: { error: 'Invalid credentials' } };\n}\n\nconst valid = bcrypt.compareSync(password, user.password_hash);\nif (!valid) {\n  return { json: { error: 'Invalid credentials' } };\n}\n\nconst token = jwt.sign(\n  { userId: user.id, email: user.email },\n  process.env.JWT_SECRET || 'secret',\n  { expiresIn: '24h' }\n);\n\nreturn {\n  json: {\n    token,\n    user: {\n      id: user.id,\n      email: user.email,\n      name: user.name\n    }\n  }\n};"
+      },
+      "name": "Generate JWT",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        650,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify($json) }}"
+      },
+      "name": "Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        850,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Get User",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get User": {
+      "main": [
+        [
+          {
+            "node": "Generate JWT",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate JWT": {
+      "main": [
+        [
+          {
+            "node": "Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "active": false
+}

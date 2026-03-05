@@ -1,0 +1,126 @@
+{
+  "name": "BOCCO-AI-Complete-Workflow-Package",
+  "description": "Package complet des workflows Bocco AI - Importez ce fichier dans n8n",
+  "workflows": [
+    {
+      "name": "WF-05: Gestion Crédits",
+      "source": "WF-05-gestion-credits.json",
+      "description": "Gestion des crédits utilisateurs (ajout, déduction, consultation)",
+      "tags": ["credits", "core", "transactions"]
+    },
+    {
+      "name": "WF-01: Inscription + Avatar Gratuit", 
+      "source": "WF-01-inscription-avatar-gratuit.json",
+      "description": "Inscription nouvel utilisateur + génération avatar gratuit",
+      "tags": ["avatar", "free", "onboarding"]
+    },
+    {
+      "name": "WF-02: Création Avatar Payant",
+      "source": "WF-02-creation-avatar-payant.json", 
+      "description": "Création d'avatar payant avec vérification des crédits",
+      "tags": ["avatar", "paid", "credits"]
+    },
+    {
+      "name": "WF-03: Vidéo Faceless COURTE",
+      "source": "WF-03-video-faceless-courte.json",
+      "description": "Génération de vidéos faceless courtes (<1min, 6 crédits)",
+      "tags": ["video", "short", "credits", "haiper"]
+    },
+    {
+      "name": "WF-04: Vidéo Faceless LONGUE",
+      "source": "WF-04-video-faceless-longue.json",
+      "description": "Génération de vidéos faceless longues (1-2min, 10 crédits)",
+      "tags": ["video", "long", "credits", "haiper"]
+    },
+    {
+      "name": "WF-07: Achat Crédits Stripe",
+      "source": "WF-07-achat-credits-stripe.json",
+      "description": "Gestion des achats de crédits via Stripe",
+      "tags": ["stripe", "credits", "payment"]
+    },
+    {
+      "name": "WF-08: Attribution Mensuelle",
+      "source": "WF-08-attribution-mensuelle.json",
+      "description": "Attribution automatique des crédits mensuels (cron 1er du mois)",
+      "tags": ["cron", "monthly", "credits", "subscription"]
+    },
+    {
+      "name": "WF-09: Paiement Abonnement",
+      "source": "WF-09-paiement-abonnement.json",
+      "description": "Gestion des abonnements et renouvellements Stripe",
+      "tags": ["stripe", "subscription", "payment"]
+    }
+  ],
+  "importInstructions": {
+    "manual": [
+      "1. Connectez-vous à n8n (https://albbocco.app.n8n.cloud)",
+      "2. Allez dans 'Workflows' > 'Import from File'",
+      "3. Importez chaque fichier JSON dans l'ordre:",
+      "   - WF-05-gestion-credits.json (d'abord, car les autres en dépendent)",
+      "   - Puis les autres dans n'importe quel ordre",
+      "4. Configurez les credentials:",
+      "   - Supabase PostgreSQL",
+      "   - Cloudflare R2 (S3-compatible)",
+      "   - Stripe API",
+      "   - Brevo SMTP",
+      "   - Hypereal AI / Haiper AI / OpenAI",
+      "5. Activez les workflows (toggle ON)"
+    ]
+  },
+  "credentialsRequired": [
+    {
+      "name": "Supabase PostgreSQL",
+      "id": "supabase-db",
+      "variables": ["SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY"]
+    },
+    {
+      "name": "Cloudflare R2",
+      "id": "cloudflare-r2", 
+      "variables": ["R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_ENDPOINT_URL"]
+    },
+    {
+      "name": "Stripe API",
+      "id": "stripe-api",
+      "variables": ["STRIPE_SECRET_KEY", "STRIPE_WEBHOOK_SECRET"]
+    },
+    {
+      "name": "Brevo SMTP",
+      "id": "brevo-smtp",
+      "variables": ["BREVO_SMTP_HOST", "BREVO_SMTP_USER", "BREVO_SMTP_PASS"]
+    },
+    {
+      "name": "Hypereal AI",
+      "id": "hypereal-api",
+      "variables": ["HYPEREAL_API_KEY"]
+    },
+    {
+      "name": "Haiper AI",
+      "id": "haiper-api",
+      "variables": ["HAIPER_API_KEY"]
+    },
+    {
+      "name": "OpenAI",
+      "id": "openai-api",
+      "variables": ["OPENAI_API_KEY"]
+    }
+  ],
+  "webhooks": {
+    "WF-01": "/webhook/register-free-avatar",
+    "WF-02": "/webhook/create-paid-avatar", 
+    "WF-03": "/webhook/create-short-video",
+    "WF-04": "/webhook/create-long-video",
+    "WF-05": "/webhook/manage-credits",
+    "WF-07": "/webhook/stripe-credits-webhook",
+    "WF-09": "/webhook/stripe-subscription-webhook"
+  },
+  "databaseSchema": {
+    "tables": [
+      "users",
+      "avatars", 
+      "videos",
+      "credits_transactions",
+      "formations_purchases",
+      "referral_discounts"
+    ]
+  }
+}

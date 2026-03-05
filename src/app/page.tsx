@@ -34,7 +34,7 @@ export default function Home() {
   }, []);
 
   // Prix de base
-  const starterPrice = 19;
+  const starterPrice = 9;
   const proPrice = 49;
   const businessPrice = 109;
 

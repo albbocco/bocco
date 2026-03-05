@@ -1,0 +1,309 @@
+{
+  "name": "WF-09: Paiement Abonnement",
+  "nodes": [
+    {
+      "id": "webhook-start",
+      "name": "Stripe Subscription Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "stripe-subscription-webhook",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "stripe-subscription-webhook",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "verify-signature",
+      "name": "Verify Stripe Signature",
+      "type": "n8n-nodes-base.stripeTrigger",
+      "typeVersion": 1,
+      "position": [450, 300],
+      "credentials": {
+        "stripeApi": {
+          "id": "stripe-api",
+          "name": "Stripe API"
+        }
+      },
+      "parameters": {
+        "events": ["checkout.session.completed", "invoice.payment_succeeded"]
+      }
+    },
+    {
+      "id": "check-event-type",
+      "name": "Check Event Type",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 2.2,
+      "position": [650, 300],
+      "parameters": {
+        "rules": {
+          "rules": [
+            {
+              "value": "checkout.session.completed",
+              "output": 0
+            },
+            {
+              "value": "invoice.payment_succeeded",
+              "output": 1
+            }
+          ]
+        },
+        "dataType": "string",
+        "value1": "={{ $json.body.type }}",
+        "fallbackOutput": 2
+      }
+    },
+    {
+      "id": "extract-subscription-data",
+      "name": "Extract Subscription Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [850, 200],
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "user_id",
+              "value": "={{ $json.body.data.object.metadata.user_id }}"
+            },
+            {
+              "name": "plan",
+              "value": "={{ $json.body.data.object.metadata.plan }}"
+            },
+            {
+              "name": "stripe_customer_id",
+              "value": "={{ $json.body.data.object.customer }}"
+            },
+            {
+              "name": "stripe_subscription_id",
+              "value": "={{ $json.body.data.object.subscription }}"
+            },
+            {
+              "name": "amount_total",
+              "value": "={{ $json.body.data.object.amount_total }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "calculate-plan-credits",
+      "name": "Calculate Plan Credits",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1050, 200],
+      "parameters": {
+        "language": "javascript",
+        "jsCode": "// Attribution selon le plan\n// starter: 5 crédits à 9€ (prix fixe sans réduction)\n// pro: 30 crédits à 49€\n// business: 100 crédits à 109€\nconst plan = $input.first().json.plan;\nlet credits = 0;\nlet price = 0;\n\nswitch(plan) {\n  case 'starter':\n    credits = 5;\n    price = 9;  // Prix fixe, non négociable\n    break;\n  case 'pro':\n    credits = 30;\n    price = 49;\n    break;\n  case 'business':\n    credits = 100;\n    price = 109;\n    break;\n  default:\n    credits = 5;\n    price = 9;\n}\n\nreturn [{\n  json: {\n    ...$input.first().json,\n    credits_to_add: credits,\n    plan_price: price\n  }\n}];"
+      }
+    },
+    {
+      "id": "activate-subscription",
+      "name": "Activate Subscription",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1250, 200],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-db",
+          "name": "Supabase PostgreSQL"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE users SET subscription_status = 'active', subscription_plan = '{{ $json.plan }}', stripe_customer_id = '{{ $json.stripe_customer_id }}', stripe_subscription_id = '{{ $json.stripe_subscription_id }}', subscription_renews_at = NOW() + INTERVAL '1 month', credits_remaining = {{ $json.credits_to_add }}, credits_monthly = {{ $json.credits_to_add }} WHERE id = '{{ $json.user_id }}';"
+      }
+    },
+    {
+      "id": "create-transaction",
+      "name": "Create Subscription Transaction",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1450, 200],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-db",
+          "name": "Supabase PostgreSQL"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO credits_transactions (user_id, amount, type, description, created_at) VALUES ('{{ $json.user_id }}', {{ $json.credits_to_add }}, 'monthly', 'Crédits abonnement - Plan {{ $json.plan }} ({{ $json.plan_price }}€)', NOW());"
+      }
+    },
+    {
+      "id": "send-welcome",
+      "name": "Send Welcome Email",
+      "type": "n8n-nodes-base.sendEmail",
+      "typeVersion": 2.1,
+      "position": [1650, 200],
+      "credentials": {
+        "smtp": {
+          "id": "brevo-smtp",
+          "name": "Brevo SMTP"
+        }
+      },
+      "parameters": {
+        "toAddresses": "={{ $json.user_email }}",
+        "subject": "Bienvenue dans l'abonnement {{ $json.plan }} !",
+        "text": "Bonjour,\n\nVotre abonnement {{ $json.plan }} est maintenant actif !\n\nDétails :\n- Plan : {{ $json.plan }}\n- Prix : {{ $json.plan_price }}€/mois\n- Crédits inclus : {{ $json.credits_to_add }}\n\nMerci pour votre confiance !",
+        "html": "<h1>Bienvenue dans l'abonnement {{ $json.plan }} !</h1><p>Votre abonnement est maintenant <strong>actif</strong>.</p><ul><li>Plan : {{ $json.plan }}</li><li>Prix : {{ $json.plan_price }}€/mois</li><li>Crédits inclus : {{ $json.credits_to_add }}</li></ul><p>Merci pour votre confiance !</p>"
+      }
+    },
+    {
+      "id": "response-success",
+      "name": "Response - Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1850, 200],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\"success\": true, \"message\": \"Subscription activated.\"}"
+      }
+    },
+    {
+      "id": "renewal-flow",
+      "name": "Handle Renewal",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [850, 400],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-db",
+          "name": "Supabase PostgreSQL"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE users SET subscription_renews_at = NOW() + INTERVAL '1 month', credits_remaining = credits_monthly WHERE stripe_customer_id = '{{ $json.body.data.object.customer }}';"
+      }
+    },
+    {
+      "id": "response-renewal",
+      "name": "Response - Renewal",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1050, 400],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\"success\": true, \"message\": \"Subscription renewed.\"}"
+      }
+    }
+  ],
+  "connections": {
+    "Stripe Subscription Webhook": {
+      "main": [
+        [
+          {
+            "node": "Verify Stripe Signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Stripe Signature": {
+      "main": [
+        [
+          {
+            "node": "Check Event Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Event Type": {
+      "main": [
+        [
+          {
+            "node": "Extract Subscription Data",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Handle Renewal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Subscription Data": {
+      "main": [
+        [
+          {
+            "node": "Calculate Plan Credits",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Plan Credits": {
+      "main": [
+        [
+          {
+            "node": "Activate Subscription",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Activate Subscription": {
+      "main": [
+        [
+          {
+            "node": "Create Subscription Transaction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Subscription Transaction": {
+      "main": [
+        [
+          {
+            "node": "Send Welcome Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Welcome Email": {
+      "main": [
+        [
+          {
+            "node": "Response - Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Handle Renewal": {
+      "main": [
+        [
+          {
+            "node": "Response - Renewal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "tags": ["stripe", "subscription", "payment"]
+}

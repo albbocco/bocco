@@ -1,0 +1,369 @@
+{
+  "name": "WF-04: Vidéo Faceless LONGUE",
+  "nodes": [
+    {
+      "id": "webhook-start",
+      "name": "Webhook - Create Long Video",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "create-long-video",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "create-long-video",
+        "responseMode": "responseNode"
+      }
+    },
+    {
+      "id": "verify-credits",
+      "name": "Check Credits (2)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [450, 300],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-db",
+          "name": "Supabase PostgreSQL"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT credits_remaining FROM users WHERE id = '{{ $json.body.user_id }}';"
+      }
+    },
+    {
+      "id": "credits-sufficient",
+      "name": "Credits >= 2?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [650, 300],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-1",
+              "leftValue": "={{ $json[0].credits_remaining }}",
+              "rightValue": "2",
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "error-insufficient",
+      "name": "Error - Insufficient Credits",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [650, 500],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\"success\": false, \"error\": \"INSUFFICIENT_CREDITS\", \"message\": \"Crédits insuffisants. 2 crédits requis pour une vidéo longue.\"}",
+        "options": {
+          "responseCode": 402
+        }
+      }
+    },
+    {
+      "id": "hailuo-generate",
+      "name": "Hailuo/PiAPI - Generate Long Video",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [850, 300],
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.piapi.ai/api/v1/task",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "contentType": "json",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "model",
+              "value": "hailuo-video-2.0"
+            },
+            {
+              "name": "task_type",
+              "value": "video_generation"
+            },
+            {
+              "name": "input",
+              "value": "={\"prompt\": \"{{ $json.body.prompt }}\", \"duration\": 10, \"aspect_ratio\": \"9:16\"}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 180000
+        }
+      }
+    },
+    {
+      "id": "poll-hailuo",
+      "name": "Poll Hailuo Status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1050, 300],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.piapi.ai/api/v1/task/{{ $json.data.task_id }}",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "retryOnFail": true,
+      "waitBetweenTries": 20000,
+      "maxTries": 50
+    },
+    {
+      "id": "download-video",
+      "name": "Download Video",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.1,
+      "position": [1250, 300],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.data.output.video_url }}",
+        "responseFormat": "file",
+        "options": {
+          "timeout": 120000
+        }
+      }
+    },
+    {
+      "id": "upload-r2",
+      "name": "Upload to R2",
+      "type": "n8n-nodes-base.awsS3",
+      "typeVersion": 2,
+      "position": [1450, 300],
+      "credentials": {
+        "aws": {
+          "id": "cloudflare-r2",
+          "name": "Cloudflare R2"
+        }
+      },
+      "parameters": {
+        "operation": "upload",
+        "bucketName": "boccoai-videos",
+        "key": "=users/{{ $json.body.user_id }}/videos/long_{{ Date.now() }}.mp4",
+        "binaryData": true,
+        "binaryPropertyName": "data"
+      }
+    },
+    {
+      "id": "deduct-credits",
+      "name": "Deduct 2 Credits",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [1650, 300],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "WF-05: Gestion Crédits"
+        },
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "user_id",
+              "value": "={{ $json.body.user_id }}"
+            },
+            {
+              "name": "amount",
+              "value": "-2"
+            },
+            {
+              "name": "description",
+              "value": "Vidéo faceless longue (10s)"
+            },
+            {
+              "name": "type",
+              "value": "usage"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "save-video",
+      "name": "Save Video to DB",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1850, 300],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-db",
+          "name": "Supabase PostgreSQL"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO videos (user_id, format, final_url, status, credits_used, created_at) VALUES ('{{ $json.body.user_id }}', 'long', '{{ $json.Location }}', 'completed', 2, NOW());"
+      }
+    },
+    {
+      "id": "send-notification",
+      "name": "Send Email Notification",
+      "type": "n8n-nodes-base.sendEmail",
+      "typeVersion": 2.1,
+      "position": [2050, 300],
+      "credentials": {
+        "smtp": {
+          "id": "brevo-smtp",
+          "name": "Brevo SMTP"
+        }
+      },
+      "parameters": {
+        "toAddresses": "={{ $json.body.email }}",
+        "subject": "Votre vidéo longue est prête !",
+        "text": "Votre vidéo longue a été générée avec succès. Lien : {{ $json.Location }}",
+        "html": "<h1>Votre vidéo longue est prête !</h1><p><a href='{{ $json.Location }}'>Télécharger ma vidéo</a></p>"
+      }
+    },
+    {
+      "id": "response-success",
+      "name": "Response - Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2250, 300],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\"success\": true, \"message\": \"Vidéo longue en cours de génération. Vous recevrez un email lorsqu'elle sera prête.\"}"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook - Create Long Video": {
+      "main": [
+        [
+          {
+            "node": "Check Credits (2)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Credits (2)": {
+      "main": [
+        [
+          {
+            "node": "Credits >= 2?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Credits >= 2?": {
+      "main": [
+        [
+          {
+            "node": "Hailuo/PiAPI - Generate Long Video",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error - Insufficient Credits",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hailuo/PiAPI - Generate Long Video": {
+      "main": [
+        [
+          {
+            "node": "Poll Hailuo Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Poll Hailuo Status": {
+      "main": [
+        [
+          {
+            "node": "Download Video",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download Video": {
+      "main": [
+        [
+          {
+            "node": "Upload to R2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upload to R2": {
+      "main": [
+        [
+          {
+            "node": "Deduct 2 Credits",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Deduct 2 Credits": {
+      "main": [
+        [
+          {
+            "node": "Save Video to DB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Video to DB": {
+      "main": [
+        [
+          {
+            "node": "Send Email Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email Notification": {
+      "main": [
+        [
+          {
+            "node": "Response - Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

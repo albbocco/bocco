@@ -1,0 +1,126 @@
+{
+  "name": "User Registration",
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        250,
+        300
+      ],
+      "webhookId": "user-register"
+    },
+    {
+      "parameters": {
+        "functionCode": "const bcrypt = require('bcryptjs');\nconst password = $input.first().json.body.password;\nconst hashedPassword = bcrypt.hashSync(password, 10);\nreturn {\n  json: {\n    email: $input.first().json.body.email,\n    password_hash: hashedPassword,\n    name: $input.first().json.body.name\n  }\n};"
+      },
+      "name": "Hash Password",
+      "type": "n8n-nodes-base.function",
+      "typeVersion": 1,
+      "position": [
+        450,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO users (email, password_hash, name) VALUES (?, ?, ?)",
+        "parameters": "={{ JSON.stringify([$json.email, $json.password_hash, $json.name]) }}"
+      },
+      "name": "Insert User",
+      "type": "n8n-nodes-base.sqlite",
+      "typeVersion": 1,
+      "position": [
+        650,
+        300
+      ],
+      "credentials": {
+        "sqlite": "sqlite-db"
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO credits (user_id, balance) VALUES (last_insert_rowid(), 0)"
+      },
+      "name": "Create Credits",
+      "type": "n8n-nodes-base.sqlite",
+      "typeVersion": 1,
+      "position": [
+        850,
+        300
+      ],
+      "credentials": {
+        "sqlite": "sqlite-db"
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\"success\": true, \"message\": \"User registered successfully\"}"
+      },
+      "name": "Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1050,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Hash Password",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Hash Password": {
+      "main": [
+        [
+          {
+            "node": "Insert User",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert User": {
+      "main": [
+        [
+          {
+            "node": "Create Credits",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Credits": {
+      "main": [
+        [
+          {
+            "node": "Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [],
+  "active": false
+}

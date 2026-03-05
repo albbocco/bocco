@@ -1,0 +1,191 @@
+{
+  "name": "WF-08: Attribution Mensuelle",
+  "nodes": [
+    {
+      "id": "cron-trigger",
+      "name": "Monthly Cron (1st @ 00:01)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [250, 300],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "months",
+              "monthsInterval": 1,
+              "triggerAtDayOfMonth": 1,
+              "triggerAtHour": 0,
+              "triggerAtMinute": 1
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "get-active-subscribers",
+      "name": "Get Active Subscribers",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [450, 300],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-db",
+          "name": "Supabase PostgreSQL"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, subscription_plan FROM users WHERE subscription_status = 'active';"
+      }
+    },
+    {
+      "id": "split-batches",
+      "name": "Split Into Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [650, 300],
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      }
+    },
+    {
+      "id": "calculate-credits",
+      "name": "Calculate Monthly Credits",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [850, 300],
+      "parameters": {
+        "language": "javascript",
+        "jsCode": "// Attribution des crédits selon le plan\nconst plan = $input.first().json.subscription_plan;\nlet credits = 0;\n\nswitch(plan) {\n  case 'essentiel':\n    credits = 10;\n    break;\n  case 'pro':\n    credits = 15;\n    break;\n  case 'business':\n    credits = 25;\n    break;\n  default:\n    credits = 10; // Plan par défaut\n}\n\nreturn [{\n  json: {\n    user_id: $input.first().json.id,\n    subscription_plan: plan,\n    credits_to_add: credits\n  }\n}];"
+      }
+    },
+    {
+      "id": "reset-credits",
+      "name": "Reset & Add Monthly Credits",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1050, 300],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-db",
+          "name": "Supabase PostgreSQL"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE users SET credits_remaining = {{ $json.credits_to_add }}, credits_monthly = {{ $json.credits_to_add }}, subscription_renews_at = NOW() + INTERVAL '1 month' WHERE id = '{{ $json.user_id }}' RETURNING id;"
+      }
+    },
+    {
+      "id": "create-transaction",
+      "name": "Create Monthly Transaction",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1250, 300],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-db",
+          "name": "Supabase PostgreSQL"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO credits_transactions (user_id, amount, type, description, created_at) VALUES ('{{ $json.user_id }}', {{ $json.credits_to_add }}, 'monthly', 'Crédits mensuels - Plan {{ $json.subscription_plan }}', NOW());"
+      }
+    },
+    {
+      "id": "send-notification",
+      "name": "Send Monthly Notification",
+      "type": "n8n-nodes-base.sendEmail",
+      "typeVersion": 2.1,
+      "position": [1450, 300],
+      "credentials": {
+        "smtp": {
+          "id": "brevo-smtp",
+          "name": "Brevo SMTP"
+        }
+      },
+      "parameters": {
+        "toAddresses": "={{ $json.user_email }}",
+        "subject": "Vos crédits mensuels sont arrivés !",
+        "text": "Bonjour,\n\nVos crédits mensuels ont été réinitialisés.\n\nPlan : {{ $json.subscription_plan }}\nCrédits attribués : {{ $json.credits_to_add }}\n\nBonne création !",
+        "html": "<h1>Vos crédits mensuels sont arrivés !</h1><p>Plan : <strong>{{ $json.subscription_plan }}</strong></p><p>Crédits attribués : <strong>{{ $json.credits_to_add }}</strong></p><p>Bonne création !</p>"
+      }
+    }
+  ],
+  "connections": {
+    "Monthly Cron (1st @ 00:01)": {
+      "main": [
+        [
+          {
+            "node": "Get Active Subscribers",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Active Subscribers": {
+      "main": [
+        [
+          {
+            "node": "Split Into Batches",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Into Batches": {
+      "main": [
+        [
+          {
+            "node": "Calculate Monthly Credits",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Monthly Credits": {
+      "main": [
+        [
+          {
+            "node": "Reset & Add Monthly Credits",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reset & Add Monthly Credits": {
+      "main": [
+        [
+          {
+            "node": "Create Monthly Transaction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Monthly Transaction": {
+      "main": [
+        [
+          {
+            "node": "Send Monthly Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "tags": ["cron", "monthly", "credits", "subscription"]
+}

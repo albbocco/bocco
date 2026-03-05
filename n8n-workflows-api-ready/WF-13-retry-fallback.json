@@ -1,0 +1,362 @@
+{
+  "name": "WF-13: Retry Auto + Fallback",
+  "nodes": [
+    {
+      "id": "webhook-start",
+      "name": "Webhook - Workflow Error",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "workflow-error-handler",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "workflow-error-handler",
+        "responseMode": "responseNode"
+      }
+    },
+    {
+      "id": "extract-error",
+      "name": "Extract Error Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [450, 300],
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "execution_id",
+              "value": "={{ $json.body.execution_id }}"
+            },
+            {
+              "name": "workflow_id",
+              "value": "={{ $json.body.workflow_id }}"
+            },
+            {
+              "name": "workflow_name",
+              "value": "={{ $json.body.workflow_name }}"
+            },
+            {
+              "name": "user_id",
+              "value": "={{ $json.body.user_id }}"
+            },
+            {
+              "name": "error_node",
+              "value": "={{ $json.body.error_node }}"
+            },
+            {
+              "name": "error_message",
+              "value": "={{ $json.body.error_message }}"
+            },
+            {
+              "name": "payload",
+              "value": "={{ JSON.stringify($json.body.payload) }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "check-retry-count",
+      "name": "Get Retry Count",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [650, 300],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-db",
+          "name": "Supabase PostgreSQL"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COUNT(*) as retry_count FROM processing_logs WHERE workflow_name = '{{ $json.workflow_name }}' AND user_id = '{{ $json.user_id }}' AND status = 'retry' AND created_at > NOW() - INTERVAL '2 hours';"
+      }
+    },
+    {
+      "id": "evaluate-retry",
+      "name": "Retry Count < 3?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [850, 300],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-1",
+              "leftValue": "={{ $json[0].retry_count }}",
+              "rightValue": "3",
+              "operator": {
+                "type": "number",
+                "operation": "lt"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "log-retry",
+      "name": "Log Retry Attempt",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1050, 200],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-db",
+          "name": "Supabase PostgreSQL"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO processing_logs (workflow_name, user_id, status, error_message, metadata, started_at) VALUES ('{{ $json.workflow_name }}', '{{ $json.user_id }}', 'retry', '{{ $json.error_message }}', '{{ $json.payload }}', NOW());"
+      }
+    },
+    {
+      "id": "calculate-delay",
+      "name": "Calculate Delay",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1250, 200],
+      "parameters": {
+        "language": "javascript",
+        "jsCode": "// Calcul du délai exponentiel: 5min, 15min, 30min\nconst retryCount = $input.first().json[0]?.retry_count || 0;\nconst delays = [5, 15, 30]; // minutes\nconst delay = delays[retryCount] || 30;\n\nreturn [{\n  json: {\n    ...$input.first().json,\n    delay_minutes: delay,\n    execute_at: new Date(Date.now() + delay * 60000).toISOString()\n  }\n}];"
+      }
+    },
+    {
+      "id": "schedule-retry",
+      "name": "Schedule Retry (Wait)",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [1450, 200],
+      "parameters": {
+        "resume": "specificTime",
+        "resumeDateTime": "={{ $json.execute_at }}"
+      }
+    },
+    {
+      "id": "trigger-retry",
+      "name": "Trigger Workflow Retry",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [1650, 200],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "={{ $json.workflow_name }}"
+        },
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "payload",
+              "value": "={{ $json.payload }}"
+            },
+            {
+              "name": "is_retry",
+              "value": "true"
+            },
+            {
+              "name": "retry_count",
+              "value": "={{ $json[0].retry_count + 1 }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "call-refund",
+      "name": "Call WF-06 (Refund)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [1050, 400],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "WF-06: Remboursement Auto"
+        },
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "user_id",
+              "value": "={{ $json.user_id }}"
+            },
+            {
+              "name": "workflow_name",
+              "value": "={{ $json.workflow_name }}"
+            },
+            {
+              "name": "credits_used",
+              "value": "={{ $json.body.credits_used }}"
+            },
+            {
+              "name": "video_id",
+              "value": "={{ $json.body.video_id }}"
+            },
+            {
+              "name": "error_message",
+              "value": "={{ $json.error_message }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "log-final-failure",
+      "name": "Log Final Failure",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1250, 400],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-db",
+          "name": "Supabase PostgreSQL"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO processing_logs (workflow_name, user_id, status, error_message, metadata, started_at, ended_at) VALUES ('{{ $json.workflow_name }}', '{{ $json.user_id }}', 'failed_permanent', 'Max retries exceeded: {{ $json.error_message }}', '{{ $json.payload }}', NOW(), NOW());"
+      }
+    },
+    {
+      "id": "response-success",
+      "name": "Response - Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1850, 300],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\"success\": true, \"action\": \"{{ $json[0].retry_count < 3 ? 'retry_scheduled' : 'refund_initiated' }}\", \"retry_count\": {{ $json[0].retry_count || 0 }} }"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook - Workflow Error": {
+      "main": [
+        [
+          {
+            "node": "Extract Error Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Error Data": {
+      "main": [
+        [
+          {
+            "node": "Get Retry Count",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Retry Count": {
+      "main": [
+        [
+          {
+            "node": "Retry Count < 3?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retry Count < 3?": {
+      "main": [
+        [
+          {
+            "node": "Log Retry Attempt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Call WF-06 (Refund)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Retry Attempt": {
+      "main": [
+        [
+          {
+            "node": "Calculate Delay",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Delay": {
+      "main": [
+        [
+          {
+            "node": "Schedule Retry (Wait)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Retry (Wait)": {
+      "main": [
+        [
+          {
+            "node": "Trigger Workflow Retry",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger Workflow Retry": {
+      "main": [
+        [
+          {
+            "node": "Response - Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call WF-06 (Refund)": {
+      "main": [
+        [
+          {
+            "node": "Log Final Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Final Failure": {
+      "main": [
+        [
+          {
+            "node": "Response - Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

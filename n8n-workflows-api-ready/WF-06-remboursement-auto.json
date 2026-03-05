@@ -1,0 +1,278 @@
+{
+  "name": "WF-06: Remboursement Auto",
+  "nodes": [
+    {
+      "id": "webhook-start",
+      "name": "Webhook - Failed Workflow",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "workflow-failed-refund",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "workflow-failed-refund",
+        "responseMode": "responseNode"
+      }
+    },
+    {
+      "id": "extract-data",
+      "name": "Extract Failure Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [450, 300],
+      "parameters": {
+        "values": {
+          "string": [
+            {
+              "name": "user_id",
+              "value": "={{ $json.body.user_id }}"
+            },
+            {
+              "name": "workflow_name",
+              "value": "={{ $json.body.workflow_name }}"
+            },
+            {
+              "name": "credits_to_refund",
+              "value": "={{ $json.body.credits_used }}"
+            },
+            {
+              "name": "video_id",
+              "value": "={{ $json.body.video_id }}"
+            },
+            {
+              "name": "error_message",
+              "value": "={{ $json.body.error_message }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "log-failure",
+      "name": "Log Failure to DB",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [650, 300],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-db",
+          "name": "Supabase PostgreSQL"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO processing_logs (workflow_name, user_id, status, error_message, metadata, started_at, ended_at) VALUES ('{{ $json.workflow_name }}', '{{ $json.user_id }}', 'failed', '{{ $json.error_message }}', '{\"video_id\": \"{{ $json.video_id }}\", \"credits_to_refund\": {{ $json.credits_to_refund }}}', NOW(), NOW());"
+      }
+    },
+    {
+      "id": "refund-credits",
+      "name": "Refund Credits",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.1,
+      "position": [850, 300],
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "mode": "list",
+          "value": "WF-05: Gestion Crédits"
+        },
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "user_id",
+              "value": "={{ $json.user_id }}"
+            },
+            {
+              "name": "amount",
+              "value": "={{ $json.credits_to_refund }}"
+            },
+            {
+              "name": "description",
+              "value": "=Remboursement - Échec {{ $json.workflow_name }}"
+            },
+            {
+              "name": "type",
+              "value": "refund"
+            },
+            {
+              "name": "operation",
+              "value": "add"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "create-refund-transaction",
+      "name": "Create Refund Transaction",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1050, 300],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-db",
+          "name": "Supabase PostgreSQL"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO credits_transactions (user_id, amount, type, description, related_video_id, created_at) VALUES ('{{ $json.user_id }}', {{ $json.credits_to_refund }}, 'refund', 'Remboursement automatique - {{ $json.workflow_name }} a échoué', '{{ $json.video_id }}', NOW());"
+      }
+    },
+    {
+      "id": "update-video-status",
+      "name": "Update Video Status to Failed",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1250, 300],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-db",
+          "name": "Supabase PostgreSQL"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE videos SET status = 'failed', error_message = '{{ $json.error_message }}' WHERE id = '{{ $json.video_id }}';"
+      }
+    },
+    {
+      "id": "notify-user",
+      "name": "Send Refund Email to User",
+      "type": "n8n-nodes-base.sendEmail",
+      "typeVersion": 2.1,
+      "position": [1450, 300],
+      "credentials": {
+        "smtp": {
+          "id": "brevo-smtp",
+          "name": "Brevo SMTP"
+        }
+      },
+      "parameters": {
+        "toAddresses": "={{ $json.user_email }}",
+        "subject": "Votre vidéo n'a pas pu être générée - Crédits remboursés",
+        "text": "Bonjour,\n\nNous sommes désolés, mais votre vidéo n'a pas pu être générée suite à une erreur technique.\n\nNous avons automatiquement remboursé {{ $json.credits_to_refund }} crédit(s) sur votre compte.\n\nVous pouvez réessayer quand vous le souhaitez.\n\nCordialement,\nL'équipe bocco.ai",
+        "html": "<h1>Remboursement automatique</h1><p>Bonjour,</p><p>Nous sommes désolés, mais votre vidéo n'a pas pu être générée suite à une erreur technique.</p><p>Nous avons automatiquement remboursé <strong>{{ $json.credits_to_refund }} crédit(s)</strong> sur votre compte.</p><p>Vous pouvez réessayer quand vous le souhaitez.</p><p>Cordialement,<br>L'équipe bocco.ai</p>"
+      }
+    },
+    {
+      "id": "notify-admin",
+      "name": "Notify Admin",
+      "type": "n8n-nodes-base.sendEmail",
+      "typeVersion": 2.1,
+      "position": [1450, 500],
+      "credentials": {
+        "smtp": {
+          "id": "brevo-smtp",
+          "name": "Brevo SMTP"
+        }
+      },
+      "parameters": {
+        "toAddresses": "admin@bocco.ai",
+        "subject": "[ALERTE] Workflow échoué - Remboursement effectué",
+        "text": "Alerte technique:\n\nWorkflow: {{ $json.workflow_name }}\nUser ID: {{ $json.user_id }}\nVideo ID: {{ $json.video_id }}\nCrédits remboursés: {{ $json.credits_to_refund }}\nErreur: {{ $json.error_message }}\n\nAction: Remboursement automatique effectué.",
+        "html": "<h1>Alerte technique</h1><ul><li>Workflow: {{ $json.workflow_name }}</li><li>User ID: {{ $json.user_id }}</li><li>Video ID: {{ $json.video_id }}</li><li>Crédits remboursés: {{ $json.credits_to_refund }}</li><li>Erreur: {{ $json.error_message }}</li></ul><p>Action: Remboursement automatique effectué.</p>"
+      }
+    },
+    {
+      "id": "response-success",
+      "name": "Response - Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1650, 300],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\"success\": true, \"message\": \"Refund processed.\"}"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook - Failed Workflow": {
+      "main": [
+        [
+          {
+            "node": "Extract Failure Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Failure Data": {
+      "main": [
+        [
+          {
+            "node": "Log Failure to DB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Failure to DB": {
+      "main": [
+        [
+          {
+            "node": "Refund Credits",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Refund Credits": {
+      "main": [
+        [
+          {
+            "node": "Create Refund Transaction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Refund Transaction": {
+      "main": [
+        [
+          {
+            "node": "Update Video Status to Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Video Status to Failed": {
+      "main": [
+        [
+          {
+            "node": "Send Refund Email to User",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Notify Admin",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Refund Email to User": {
+      "main": [
+        [
+          {
+            "node": "Response - Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  }
+}

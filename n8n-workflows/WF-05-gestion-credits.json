@@ -1,0 +1,312 @@
+{
+  "name": "WF-05: Gestion Crédits",
+  "nodes": [
+    {
+      "id": "webhook-start",
+      "name": "Webhook - Manage Credits",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [250, 300],
+      "webhookId": "manage-credits",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "manage-credits",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "verify-balance",
+      "name": "Verify Current Balance",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [450, 300],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-db",
+          "name": "Supabase PostgreSQL"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT credits_remaining FROM users WHERE id = '{{ $json.body.user_id }}';"
+      }
+    },
+    {
+      "id": "check-operation",
+      "name": "Check Operation Type",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 2.2,
+      "position": [650, 300],
+      "parameters": {
+        "rules": {
+          "rules": [
+            {
+              "value": "deduct",
+              "output": 0
+            },
+            {
+              "value": "add",
+              "output": 1
+            },
+            {
+              "value": "get",
+              "output": 2
+            }
+          ]
+        },
+        "dataType": "string",
+        "value1": "={{ $json.body.operation }}",
+        "fallbackOutput": 2
+      }
+    },
+    {
+      "id": "check-sufficient",
+      "name": "Check Sufficient Credits",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [850, 200],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-1",
+              "leftValue": "={{ $json[0].credits_remaining + $json.body.amount }}",
+              "rightValue": "0",
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "deduct-credits",
+      "name": "Deduct Credits",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1050, 150],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-db",
+          "name": "Supabase PostgreSQL"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE users SET credits_remaining = credits_remaining + {{ $json.body.amount }} WHERE id = '{{ $json.body.user_id }}' RETURNING credits_remaining;"
+      }
+    },
+    {
+      "id": "create-transaction-deduct",
+      "name": "Create Transaction",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1250, 150],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-db",
+          "name": "Supabase PostgreSQL"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO credits_transactions (user_id, amount, type, description, created_at) VALUES ('{{ $json.body.user_id }}', {{ $json.body.amount }}, '{{ $json.body.type }}', '{{ $json.body.description }}', NOW());"
+      }
+    },
+    {
+      "id": "response-success-deduct",
+      "name": "Response - Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1450, 150],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\"success\": true, \"operation\": \"deduct\", \"amount\": {{ $json.body.amount }}, \"new_balance\": {{ $json[0].credits_remaining }}}"
+      }
+    },
+    {
+      "id": "error-insufficient",
+      "name": "Error - Insufficient",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1050, 300],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "{\"success\": false, \"error\": \"INSUFFICIENT_CREDITS\", \"message\": \"Crédits insuffisants pour cette opération.\"}",
+        "options": {
+          "responseCode": 402
+        }
+      }
+    },
+    {
+      "id": "add-credits",
+      "name": "Add Credits",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1050, 450],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-db",
+          "name": "Supabase PostgreSQL"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE users SET credits_remaining = credits_remaining + {{ $json.body.amount }} WHERE id = '{{ $json.body.user_id }}' RETURNING credits_remaining;"
+      }
+    },
+    {
+      "id": "create-transaction-add",
+      "name": "Create Transaction",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1250, 450],
+      "credentials": {
+        "postgres": {
+          "id": "supabase-db",
+          "name": "Supabase PostgreSQL"
+        }
+      },
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO credits_transactions (user_id, amount, type, description, created_at) VALUES ('{{ $json.body.user_id }}', {{ $json.body.amount }}, '{{ $json.body.type }}', '{{ $json.body.description }}', NOW());"
+      }
+    },
+    {
+      "id": "response-success-add",
+      "name": "Response - Success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1450, 450],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\"success\": true, \"operation\": \"add\", \"amount\": {{ $json.body.amount }}, \"new_balance\": {{ $json[0].credits_remaining }}}"
+      }
+    },
+    {
+      "id": "response-balance",
+      "name": "Response - Balance",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1050, 600],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\"success\": true, \"operation\": \"get\", \"balance\": {{ $json[0].credits_remaining }}}"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook - Manage Credits": {
+      "main": [
+        [
+          {
+            "node": "Verify Current Balance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify Current Balance": {
+      "main": [
+        [
+          {
+            "node": "Check Operation Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Operation Type": {
+      "main": [
+        [
+          {
+            "node": "Check Sufficient Credits",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Add Credits",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Response - Balance",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Sufficient Credits": {
+      "main": [
+        [
+          {
+            "node": "Deduct Credits",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Error - Insufficient",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Deduct Credits": {
+      "main": [
+        [
+          {
+            "node": "Create Transaction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Transaction": {
+      "main": [
+        [
+          {
+            "node": "Response - Success",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add Credits": {
+      "main": [
+        [
+          {
+            "node": "Create Transaction",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "saveManualExecutions": true,
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "tags": ["credits", "core", "transactions"]
+}
